@@ -17,7 +17,7 @@ this repository contains the full copyright notices and license terms. -->
             <label name="employee"/>
             <field name="employee"/>
             <label name="type"/>
-            <field name="type"/>
+            <field name="type" widget="selection"/>
             <label name="origin"/>
             <field name="origin"/>
             <separator name="description" colspan="4"/>
