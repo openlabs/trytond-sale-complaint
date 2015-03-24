@@ -72,7 +72,11 @@ class Complaint(Workflow, ModelSQL, ModelView):
         'on_change_with_origin_model')
     description = fields.Text('Description', states=_states, depends=_depends)
     actions = fields.One2Many('sale.complaint.action', 'complaint', 'Actions',
-        states=_states, depends=_depends + ['origin_model', 'origin_id'])
+        states={
+            'readonly': ((Eval('state') != 'draft')
+                 | (If(~Eval('origin_id', 0), 0, Eval('origin_id', 0)) <= 0)),
+             },
+        depends=['state', 'origin_model', 'origin_id'])
     state = fields.Selection([
             ('draft', 'Draft'),
             ('waiting', 'Waiting'),
