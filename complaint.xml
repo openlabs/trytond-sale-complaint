@@ -133,7 +133,7 @@ this repository contains the full copyright notices and license terms. -->
         <record model="ir.action.act_window" id="act_complaint_relate_sale">
             <field name="name">Complaints</field>
             <field name="res_model">sale.complaint</field>
-            <field name="domain">['OR', ('origin.id', 'in', Eval('active_ids'), 'sale.sale'), ('origin.sale', 'in', Eval('active_ids'), 'sale.line')]</field>
+            <field name="domain">[['OR', ('origin.id', 'in', Eval('active_ids'), 'sale.sale'), ('origin.sale', 'in', Eval('active_ids'), 'sale.line')], ('type.origin.model', 'in', ['sale.sale', 'sale.line'])]</field>
         </record>
         <record model="ir.action.act_window.view"
             id="act_complaint_relate_sale_view1">

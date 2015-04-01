@@ -4,22 +4,12 @@
     :copyright: (c) 2015 by Openlabs Technologies & Consulting (P) Limited
     :license: BSD, see LICENSE for more details.
 """
-import warnings
-import datetime
-import time
-from decimal import Decimal
 from collections import defaultdict
 
-from trytond.model import ModelSQL, ModelView, Workflow, fields, ModelStorage
-from trytond.model.modelstorage import EvalEnvironment
+from trytond.model import ModelSQL, ModelView, Workflow, fields
 from trytond.pyson import Eval, If, Bool, Id
 from trytond.pool import Pool
 from trytond.transaction import Transaction
-from trytond.pyson import PYSONEncoder, PYSONDecoder, PYSON
-from trytond import backend
-from trytond.cache import freeze
-
-from model import ReferenceField
 
 
 __all__ = ['Type', 'Complaint', 'Action',
@@ -59,7 +49,7 @@ class Complaint(Workflow, ModelSQL, ModelView):
         states=_states, depends=_depends)
     type = fields.Many2One('sale.complaint.type', 'Type', required=True,
         states=_states, depends=_depends)
-    origin = ReferenceField('Origin', selection='get_origin',
+    origin = fields.Reference('Origin', selection='get_origin',
         states={
             'readonly': ((Eval('state') != 'draft')
                 | Bool(Eval('actions', [0]))),
@@ -319,278 +309,6 @@ class Complaint(Workflow, ModelSQL, ModelView):
             if Model.search(domain, count=True) != 1:
                 cls.raise_user_error('invalid_origin', (record.id,))
 
-    @classmethod
-    def _validate(cls, records, field_names=None):  # pragma: no cover
-        """
-        Rewriting this method from ModelStorage temporarily until the fix
-        for Reference field is pushed to 3.4
-        """
-        pool = Pool()
-        # Ensure that records are readable
-        with Transaction().set_context(_check_access=False):
-            records = cls.browse(records)
-
-        def call(name):
-            method = getattr(cls, name)
-            if not hasattr(method, 'im_self') or method.im_self:
-                return method(records)
-            else:
-                return all(method(r) for r in records)
-        for field in cls._constraints:
-            warnings.warn(
-                '_constraints is deprecated, override validate instead',
-                DeprecationWarning, stacklevel=2)
-            if not call(field[0]):
-                cls.raise_user_error(field[1])
-
-        ctx_pref = {}
-        if Transaction().user:
-            try:
-                User = pool.get('res.user')
-            except KeyError:
-                pass
-            else:
-                ctx_pref = User.get_preferences(context_only=True)
-
-        def is_pyson(test):
-            if isinstance(test, PYSON):
-                return True
-            if isinstance(test, (list, tuple)):
-                for i in test:
-                    if isinstance(i, PYSON):
-                        return True
-                    if isinstance(i, (list, tuple)):
-                        if is_pyson(i):
-                            return True
-            if isinstance(test, dict):
-                for key, value in test.items():
-                    if isinstance(value, PYSON):
-                        return True
-                    if isinstance(value, (list, tuple, dict)):
-                        if is_pyson(value):
-                            return True
-            return False
-
-        def validate_domain(field):
-            if not field.domain:
-                return
-            if field._type in ['dict', 'reference']:
-                return
-            if field._type in ('many2one', 'one2many'):
-                Relation = pool.get(field.model_name)
-            elif field._type in ('many2many', 'one2one'):
-                Relation = field.get_target()
-            else:
-                Relation = cls
-            domains = defaultdict(list)
-            if is_pyson(field.domain):
-                pyson_domain = PYSONEncoder().encode(field.domain)
-                for record in records:
-                    env = EvalEnvironment(record, cls)
-                    env.update(Transaction().context)
-                    env['current_date'] = datetime.datetime.today()
-                    env['time'] = time
-                    env['context'] = Transaction().context
-                    env['active_id'] = record.id
-                    domain = freeze(PYSONDecoder(env).decode(pyson_domain))
-                    domains[domain].append(record)
-            else:
-                domains[freeze(field.domain)].extend(records)
-
-            for domain, sub_records in domains.iteritems():
-                validate_relation_domain(field, sub_records, Relation, domain)
-
-        def validate_relation_domain(field, records, Relation, domain):
-            if field._type in ('many2one', 'one2many', 'many2many', 'one2one'):
-                relations = []
-                for record in records:
-                    if getattr(record, field.name):
-                        if field._type in ('many2one', 'one2one'):
-                            relations.append(getattr(record, field.name))
-                        else:
-                            relations.extend(getattr(record, field.name))
-            else:
-                relations = records
-            if relations:
-                finds = Relation.search(['AND',
-                    [('id', 'in', [r.id for r in relations])],
-                    domain,
-                ])
-                if set(relations) != set(finds):
-                    cls.raise_user_error('domain_validation_record',
-                        error_args=cls._get_error_args(field.name))
-
-        field_names = set(field_names or [])
-        function_fields = {name for name, field in cls._fields.iteritems()
-            if isinstance(field, fields.Function)}
-        ctx_pref['active_test'] = False
-        with Transaction().set_context(ctx_pref):
-            for field_name, field in cls._fields.iteritems():
-                depends = set(field.depends)
-                if (field_names
-                        and field_name not in field_names
-                        and not (depends & field_names)
-                        and not (depends & function_fields)):
-                    continue
-                if isinstance(field, fields.Function) and \
-                        not field.setter:
-                    continue
-
-                validate_domain(field)
-
-                def required_test(value, field_name):
-                    if (isinstance(value, (type(None), type(False), list,
-                                    tuple, basestring, dict))
-                            and not value):
-                        cls.raise_user_error('required_validation_record',
-                            error_args=cls._get_error_args(field_name))
-                # validate states required
-                if field.states and 'required' in field.states:
-                    if is_pyson(field.states['required']):
-                        pyson_required = PYSONEncoder().encode(
-                                field.states['required'])
-                        for record in records:
-                            env = EvalEnvironment(record, cls)
-                            env.update(Transaction().context)
-                            env['current_date'] = datetime.datetime.today()
-                            env['time'] = time
-                            env['context'] = Transaction().context
-                            env['active_id'] = record.id
-                            required = PYSONDecoder(env).decode(pyson_required)
-                            if required:
-                                required_test(getattr(record, field_name),
-                                    field_name)
-                    else:
-                        if field.states['required']:
-                            for record in records:
-                                required_test(getattr(record, field_name),
-                                    field_name)
-                # validate required
-                if field.required:
-                    for record in records:
-                        required_test(getattr(record, field_name), field_name)
-                # validate size
-                if hasattr(field, 'size') and field.size is not None:
-                    for record in records:
-                        if isinstance(field.size, PYSON):
-                            pyson_size = PYSONEncoder().encode(field.size)
-                            env = EvalEnvironment(record, cls)
-                            env.update(Transaction().context)
-                            env['current_date'] = datetime.datetime.today()
-                            env['time'] = time
-                            env['context'] = Transaction().context
-                            env['active_id'] = record.id
-                            field_size = PYSONDecoder(env).decode(pyson_size)
-                        else:
-                            field_size = field.size
-                        size = len(getattr(record, field_name) or '')
-                        if (size > field_size >= 0):
-                            error_args = cls._get_error_args(field_name)
-                            error_args['size'] = size
-                            cls.raise_user_error('size_validation_record',
-                                error_args=error_args)
-
-                def digits_test(value, digits, field_name):
-                    def raise_user_error(value):
-                        error_args = cls._get_error_args(field_name)
-                        error_args['digits'] = digits[1]
-                        error_args['value'] = repr(value)
-                        cls.raise_user_error('digits_validation_record',
-                            error_args=error_args)
-                    if value is None:
-                        return
-                    if isinstance(value, Decimal):
-                        if (value.quantize(Decimal(str(10.0 ** -digits[1])))
-                                != value):
-                            raise_user_error(value)
-                    elif backend.name() != 'mysql':
-                        if not (round(value, digits[1]) == float(value)):
-                            raise_user_error(value)
-                # validate digits
-                if hasattr(field, 'digits') and field.digits:
-                    if is_pyson(field.digits):
-                        pyson_digits = PYSONEncoder().encode(field.digits)
-                        for record in records:
-                            env = EvalEnvironment(record, cls)
-                            env.update(Transaction().context)
-                            env['current_date'] = datetime.datetime.today()
-                            env['time'] = time
-                            env['context'] = Transaction().context
-                            env['active_id'] = record.id
-                            digits = PYSONDecoder(env).decode(pyson_digits)
-                            digits_test(getattr(record, field_name), digits,
-                                field_name)
-                    else:
-                        for record in records:
-                            digits_test(getattr(record, field_name),
-                                field.digits, field_name)
-
-                # validate selection
-                if hasattr(field, 'selection') and field.selection:
-                    if isinstance(field.selection, (tuple, list)):
-                        test = set(dict(field.selection).keys())
-                    for record in records:
-                        value = getattr(record, field_name)
-                        if field._type == 'reference':
-                            if isinstance(value, ModelStorage):
-                                value = value.__class__.__name__
-                            elif value:
-                                value, _ = value.split(',')
-                        if not isinstance(field.selection, (tuple, list)):
-                            sel_func = getattr(cls, field.selection)
-                            if (not hasattr(sel_func, 'im_self')
-                                    or sel_func.im_self):
-                                test = sel_func()
-                            else:
-                                test = sel_func(record)
-                            test = set(dict(test))
-                        # None and '' are equivalent
-                        if '' in test or None in test:
-                            test.add('')
-                            test.add(None)
-                        if value not in test:
-                            error_args = cls._get_error_args(field_name)
-                            error_args['value'] = value
-                            cls.raise_user_error('selection_validation_record',
-                                error_args=error_args)
-
-                def format_test(value, format, field_name):
-                    if not value:
-                        return
-                    if not isinstance(value, datetime.time):
-                        value = value.time()
-                    if value != datetime.datetime.strptime(
-                            value.strftime(format), format).time():
-                        error_args = cls._get_error_args(field_name)
-                        error_args['value'] = value
-                        cls.raise_user_error('time_format_validation_record',
-                            error_args=error_args)
-
-                # validate time format
-                if (field._type in ('datetime', 'time')
-                        and field_name not in ('create_date', 'write_date')):
-                    if is_pyson(field.format):
-                        pyson_format = PYSONDecoder().encode(field.format)
-                        for record in records:
-                            env = EvalEnvironment(record, cls)
-                            env.update(Transaction().context)
-                            env['current_date'] = datetime.datetime.today()
-                            env['time'] = time
-                            env['context'] = Transaction().context
-                            env['active_id'] = record.id
-                            format = PYSONDecoder(env).decode(pyson_format)
-                            format_test(getattr(record, field_name), format,
-                                field_name)
-                    else:
-                        for record in records:
-                            format_test(getattr(record, field_name),
-                                field.format, field_name)
-
-        for record in records:
-            record.pre_validate()
-
-        cls.validate(records)
-
 
 class Action(ModelSQL, ModelView):
     'Customer Complaint Action'
@@ -738,6 +456,8 @@ class Action(ModelSQL, ModelView):
             lines_values = []
             for invoice_line in invoice_lines:
                 lines_values.append(invoice_line._credit())
+                # Remove product as it is not a return
+                lines_values[0].pop('product', None)
             if isinstance(self.complaint.origin, Line):
                 if self.quantity is not None:
                     lines_values[0]['quantity'] = self.quantity

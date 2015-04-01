@@ -9,12 +9,10 @@ from trytond.pool import Pool
 from complaint import Type, Complaint, Action, Action_SaleLine, \
      Action_InvoiceLine
 from sale import Configuration, Sale
-from model import ModelAccess, ReferenceField  # noqa
 
 
 def register():
     Pool.register(
-        ModelAccess,
         Type,
         Complaint,
         Action,
