@@ -20,9 +20,10 @@ this repository contains the full copyright notices and license terms. -->
             <field name="type" widget="selection"/>
             <label name="origin"/>
             <field name="origin"/>
-            <separator name="description" colspan="4"/>
-            <field name="description" colspan="4"/>
-            <field name="actions" colspan="4"/>
+            <separator name="description" colspan="2"/>
+            <newline/>
+            <field name="description" colspan="2"/>
+            <field name="actions" colspan="2"/>
             <label name="state"/>
             <field name="state"/>
             <group col="6" colspan="2" id="buttons">
