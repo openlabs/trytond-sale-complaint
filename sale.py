@@ -4,7 +4,7 @@
     :copyright: (c) 2015 by Openlabs Technologies & Consulting (P) Limited
     :license: BSD, see LICENSE for more details.
 """
-from trytond.pool import PoolMeta
+from trytond.pool import PoolMeta, Pool
 from trytond.model import fields
 from trytond.pyson import Eval
 
@@ -32,6 +32,26 @@ class Configuration:
 class Sale:
     __name__ = 'sale.sale'
 
+    # XXX: Remove this field defination from here when moving to tryton
+    # 3.6 as 3.6 already has origin field on sale
+    origin = fields.Reference(
+        'Origin', selection='get_origin', select=True,
+        states={
+            'readonly': Eval('state') != 'draft',
+        },
+        depends=['state']
+    )
+
     @classmethod
     def _get_origin(cls):
-        return super(Sale, cls)._get_origin() + ['sale.complaint']
+        'Return list of Model names for origin Reference'
+        return ['sale.sale', 'sale.complaint']
+
+    @classmethod
+    def get_origin(cls):
+        Model = Pool().get('ir.model')
+        models = cls._get_origin()
+        models = Model.search([
+            ('model', 'in', models),
+        ])
+        return [(None, '')] + [(m.model, m.name) for m in models]
